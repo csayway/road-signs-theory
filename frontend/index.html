@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Довідник дорожніх знаків</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>🚦 Довідник дорожніх знаків</h1>
+
+        <div class="controls">
+            <button onclick="loadAllSigns()">Завантажити всі знаки</button>
+            <button onclick="loadSignsByCategory('Заборонні')">Заборонні</button>
+            <button onclick="loadSignsByCategory('Пріоритету')">Пріоритету</button>
+            <button onclick="loadSignsByCategory('Інформаційні')">Інформаційні</button>
+            <button onclick="loadSignsByCategory('Попереджувальні')">Попереджувальні</button>
+        </div>
+
+        <div id="loading" style="display: none;">Завантаження...</div>
+
+        <div id="signsList" class="signs-container"></div>
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:5000';
+
+        function showLoading() {
+            document.getElementById('loading').style.display = 'block';
+        }
+
+        function hideLoading() {
+            document.getElementById('loading').style.display = 'none';
+        }
+
+        async function loadAllSigns() {
+            showLoading();
+            try {
+                const response = await fetch(`${API_URL}/signs`);
+                const data = await response.json();
+                displaySigns(data.data);
+            } catch (error) {
+                console.error('Помилка:', error);
+                document.getElementById('signsList').innerHTML = '<p>Помилка завантаження</p>';
+            }
+            hideLoading();
+        }
+
+        async function loadSignsByCategory(category) {
+            showLoading();
+            try {
+                const response = await fetch(`${API_URL}/signs/${category}`);
+                const data = await response.json();
+                displaySigns(data.data);
+            } catch (error) {
+                console.error('Помилка:', error);
+                document.getElementById('signsList').innerHTML = '<p>Помилка завантаження</p>';
+            }
+            hideLoading();
+        }
+
+        function displaySigns(signs) {
+            const container = document.getElementById('signsList');
+
+            if (!signs || signs.length === 0) {
+                container.innerHTML = '<p>Знаки не знайдено</p>';
+                return;
+            }
+
+            container.innerHTML = signs.map(sign => `
+                <div class="sign-card">
+                    <h3>${sign.name}</h3>
+                    <span class="category ${sign.category}">${sign.category}</span>
+                    <p>${sign.description}</p>
+                </div>
+            `).join('');
+        }
+
+        // Завантажуємо знаки при завантаженні сторінки
+        window.onload = loadAllSigns;
+    </script>
+</body>
+</html>
