@@ -1,85 +1,314 @@
-body {
-    font-family: Arial, sans-serif;
-    max-width: 1200px;
-    margin: 0 auto;
-    padding: 20px;
-    background-color: #f5f5f5;
-}
+* {
+      box-sizing: border-box;
+      font-family: 'Roboto', sans-serif;
+    }
 
-.container {
-    background: white;
-    padding: 30px;
-    border-radius: 10px;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-}
+    body {
+      margin: 0;
+      background: linear-gradient(135deg, #141E30, #243B55);
+      color: #f4f4f4;
+      min-height: 100vh;
+    }
 
-h1 {
-    color: #2c3e50;
-    text-align: center;
-    margin-bottom: 30px;
-}
+    /* === NAVIGATION BAR === */
+    nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: rgba(255, 255, 255, 0.08);
+      backdrop-filter: blur(10px);
+      padding: 10px 25px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      box-shadow: 0 2px 15px rgba(0, 0, 0, 0.2);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
 
-.controls {
-    text-align: center;
-    margin-bottom: 30px;
-}
+    nav .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
 
-button {
-    background: #3498db;
-    color: white;
-    border: none;
-    padding: 10px 20px;
-    margin: 5px;
-    border-radius: 5px;
-    cursor: pointer;
-    transition: background 0.3s;
-}
+    nav img {
+      width: 45px;
+      height: 45px;
+      border-radius: 50%;
+      object-fit: cover;
+      border: 2px solid #007bff;
+      background-color: #fff;
+    }
 
-button:hover {
-    background: #2980b9;
-}
+    nav h2 {
+      font-size: 1.3rem;
+      color: #fff;
+      letter-spacing: 1px;
+    }
 
-.signs-container {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-    gap: 20px;
-}
+    nav button {
+      background: #007bff;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      padding: 8px 16px;
+      cursor: pointer;
+      transition: 0.3s;
+      font-weight: 500;
+    }
 
-.sign-card {
-    background: #f8f9fa;
-    padding: 20px;
-    border-radius: 8px;
-    border-left: 4px solid #3498db;
-}
+    nav button:hover {
+      background: #0056b3;
+      transform: scale(1.05);
+    }
 
-.sign-card h3 {
-    margin: 0 0 10px 0;
-    color: #2c3e50;
-}
+    /* === Основний контейнер === */
+    .container {
+      width: 95%;
+      max-width: 1100px;
+      margin: 40px auto;
+      background: rgba(255, 255, 255, 0.05);
+      backdrop-filter: blur(10px);
+      border-radius: 16px;
+      padding: 30px;
+      box-shadow: 0 4px 30px rgba(0, 0, 0, 0.2);
+      animation: fadeIn 0.7s ease;
+    }
 
-.category {
-    display: inline-block;
-    padding: 5px 10px;
-    border-radius: 15px;
-    font-size: 12px;
-    color: white;
-    margin-bottom: 10px;
-}
+    h1 {
+      text-align: center;
+      font-size: 2rem;
+      color: #fff;
+      margin-bottom: 25px;
+    }
 
-.Заборонні { background: #e74c3c; }
-.Пріоритету { background: #f39c12; }
-.Інформаційні { background: #3498db; }
-.Попереджувальні { background: #9b59b6; }
+    /* === Таби === */
+    .tabs {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
 
-.sign-card p {
-    margin: 0;
-    color: #666;
-    line-height: 1.5;
-}
+    .tab {
+      padding: 10px 25px;
+      background: rgba(255, 255, 255, 0.1);
+      border: none;
+      border-radius: 10px;
+      color: #fff;
+      cursor: pointer;
+      transition: 0.3s;
+      font-weight: 500;
+    }
 
-#loading {
-    text-align: center;
-    padding: 20px;
-    font-size: 18px;
-    color: #666;
-}
+    .tab.active {
+      background: #007bff;
+      box-shadow: 0 0 15px #007bff88;
+    }
+
+    .tab-content {
+      display: none;
+      animation: fadeIn 0.4s ease;
+    }
+
+    .tab-content.active {
+      display: block;
+    }
+
+    /* === Кнопки === */
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+
+    .controls button {
+      background: #007bff;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      padding: 10px 18px;
+      cursor: pointer;
+      transition: 0.3s;
+      font-weight: 500;
+    }
+
+    .controls button:hover {
+      background: #0056b3;
+      transform: scale(1.05);
+    }
+
+    /* === Картки знаків === */
+    .signs-container {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 15px;
+    }
+
+    .sign-card {
+      background: rgba(255, 255, 255, 0.08);
+      padding: 15px;
+      border-radius: 12px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+      transition: 0.3s ease;
+      cursor: pointer;
+    }
+
+    .sign-card:hover {
+      transform: translateY(-5px);
+      background: rgba(255, 255, 255, 0.15);
+    }
+
+    .sign-card h3 {
+      margin-top: 0;
+      color: #fff;
+      font-weight: 600;
+      margin-bottom: 5px;
+    }
+
+    .sign-card p {
+      font-size: 0.9rem;
+      color: #ccc;
+    }
+
+    .category {
+      display: inline-block;
+      background: #007bff;
+      color: white;
+      padding: 4px 10px;
+      border-radius: 8px;
+      font-size: 0.8rem;
+      margin-bottom: 8px;
+    }
+
+    /* === Адмін панель === */
+    .admin-panel {
+      background: rgba(255, 255, 255, 0.08);
+      padding: 20px;
+      border-radius: 12px;
+    }
+
+    .user-card {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px;
+      background: rgba(255, 255, 255, 0.05);
+      margin-bottom: 10px;
+      border-radius: 8px;
+    }
+
+    .admin-badge {
+      background: #28a745;
+      padding: 3px 8px;
+      border-radius: 5px;
+      font-size: 0.75rem;
+      color: white;
+    }
+
+    .guest-badge {
+      background: #2196F3;
+      padding: 3px 8px;
+      border-radius: 5px;
+      font-size: 0.75rem;
+      color: white;
+    }
+
+    .promote-btn {
+      background: #FF9800;
+      color: white;
+      border: none;
+      padding: 6px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: 0.3s;
+    }
+
+    .promote-btn:hover {
+      background: #F57C00;
+    }
+
+    .promote-btn:disabled {
+      background: #555;
+      cursor: not-allowed;
+    }
+
+    /* === MODAL === */
+    .modal {
+      display: none;
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      background: rgba(0, 0, 0, 0.6);
+      justify-content: center;
+      align-items: center;
+      z-index: 1000;
+    }
+
+    .modal-content {
+      background: rgba(255, 255, 255, 0.1);
+      padding: 25px;
+      border-radius: 12px;
+      backdrop-filter: blur(10px);
+      width: 90%;
+      max-width: 400px;
+      box-shadow: 0 0 30px rgba(0,0,0,0.4);
+      animation: fadeIn 0.3s ease;
+    }
+
+    .modal-content h3 {
+      text-align: center;
+      margin-bottom: 15px;
+      color: #fff;
+    }
+
+    .modal-content input {
+      width: 100%;
+      margin: 8px 0;
+      padding: 10px;
+      border-radius: 8px;
+      border: none;
+      outline: none;
+      background: rgba(255,255,255,0.2);
+      color: #fff;
+    }
+
+    .modal-content button {
+      width: 100%;
+      margin-top: 10px;
+      padding: 10px;
+      border-radius: 8px;
+      background: #007bff;
+      border: none;
+      color: #fff;
+      cursor: pointer;
+      transition: 0.3s;
+    }
+
+    .modal-content button:hover {
+      background: #0056b3;
+    }
+
+    .close-btn {
+      float: right;
+      cursor: pointer;
+      color: #fff;
+      font-size: 18px;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(15px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @media (max-width: 600px) {
+      .controls button {
+        width: 100%;
+      }
+      nav h2 {
+        display: none;
+      }
+    }

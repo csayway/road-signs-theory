@@ -1,84 +1,75 @@
 <!DOCTYPE html>
 <html lang="uk">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Довідник дорожніх знаків</title>
-    <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Довідник дорожніх знаків</title>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;600&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div class="container">
-        <h1>Довідник дорожніх знаків</h1>
+  <!-- NAVIGATION BAR -->
+  <nav>
+    <div class="logo">
+      <img src="images/logo_road_sign.jpg" alt="User Photo">
+      <h2>Дорожні знаки</h2>
+    </div>
+    <button onclick="openModal()">Особистий кабінет</button>
+  </nav>
 
-        <div class="controls">
-            <button onclick="loadAllSigns()">Завантажити всі знаки</button>
-            <button onclick="loadSignsByCategory('Заборонні')">Заборонні</button>
-            <button onclick="loadSignsByCategory('Пріоритету')">Пріоритету</button>
-            <button onclick="loadSignsByCategory('Інформаційні')">Інформаційні</button>
-            <button onclick="loadSignsByCategory('Попереджувальні')">Попереджувальні</button>
-        </div>
+  <div class="container">
+    <h1>Довідник дорожніх знаків</h1>
 
-        <div id="loading" style="display: none;">Завантаження...</div>
-
-        <div id="signsList" class="signs-container"></div>
+    <div class="tabs">
+      <button class="tab active" onclick="switchTab('signs')">Дорожні знаки</button>
+      <button class="tab" onclick="switchTab('users')">Користувачі</button>
     </div>
 
-    <script>
-        const API_URL = 'http://localhost:5000';
+    <!-- === Знаки === -->
+    <div id="signs-tab" class="tab-content active">
+      <div class="controls">
+        <button onclick="loadAllSigns()">Усі</button>
+        <button onclick="loadSignsByCategory('Заборонні')">Заборонні</button>
+        <button onclick="loadSignsByCategory('Пріоритету')">Пріоритету</button>
+        <button onclick="loadSignsByCategory('Інформаційні')">Інформаційні</button>
+        <button onclick="loadSignsByCategory('Попереджувальні')">Попереджувальні</button>
+      </div>
+      <div id="loading" style="display:none;text-align:center;">⏳ Завантаження...</div>
+      <div id="signsList" class="signs-container"></div>
+    </div>
 
-        function showLoading() {
-            document.getElementById('loading').style.display = 'block';
-        }
+    <!-- === Користувачі === -->
+    <div id="users-tab" class="tab-content">
+      <div class="admin-panel">
+        <h2>Управління користувачами</h2>
+        <button onclick="loadAllUsers()">Оновити список</button>
+        <div id="usersLoading" style="display:none;">⏳ Завантаження користувачів...</div>
+        <div id="usersList"></div>
+      </div>
+    </div>
+  </div>
 
-        function hideLoading() {
-            document.getElementById('loading').style.display = 'none';
-        }
+  <!-- === MODAL AUTH === -->
+  <div id="authModal" class="modal">
+    <div class="modal-content">
+      <span class="close-btn" onclick="closeModal()">✖</span>
 
-        async function loadAllSigns() {
-            showLoading();
-            try {
-                const response = await fetch(`${API_URL}/signs`);
-                const data = await response.json();
-                displaySigns(data.data);
-            } catch (error) {
-                console.error('Помилка:', error);
-                document.getElementById('signsList').innerHTML = '<p>Помилка завантаження</p>';
-            }
-            hideLoading();
-        }
+      <div id="authStatus" style="display:none; margin-bottom: 15px;">
+        <p>Ви увійшли як: <strong id="authUsername"></strong></p>
+        <button id="logout-btn" onclick="logout()" style="background: #e74c3c;">Вийти</button>
+      </div>
 
-        async function loadSignsByCategory(category) {
-            showLoading();
-            try {
-                const response = await fetch(`${API_URL}/signs/${category}`);
-                const data = await response.json();
-                displaySigns(data.data);
-            } catch (error) {
-                console.error('Помилка:', error);
-                document.getElementById('signsList').innerHTML = '<p>Помилка завантаження</p>';
-            }
-            hideLoading();
-        }
+      <div id="authForm">
+        <h3>Увійти / Зареєструватися</h3>
+        <input type="text" id="username" placeholder="Ім'я користувача">
+        <input type="password" id="password" placeholder="Пароль">
+        <button onclick="login()">Увійти</button>
+        <button onclick="register()">Зареєструватися</button>
+      </div>
 
-        function displaySigns(signs) {
-            const container = document.getElementById('signsList');
-
-            if (!signs || signs.length === 0) {
-                container.innerHTML = '<p>Знаки не знайдено</p>';
-                return;
-            }
-
-            container.innerHTML = signs.map(sign => `
-                <div class="sign-card">
-                    <h3>${sign.name}</h3>
-                    <span class="category ${sign.category}">${sign.category}</span>
-                    <p>${sign.description}</p>
-                </div>
-            `).join('');
-        }
-
-        // Завантажуємо знаки при завантаженні сторінки
-        window.onload = loadAllSigns;
-    </script>
+    </div>
+  </div>
+<script src="app.js" defer></script>
 </body>
 </html>
