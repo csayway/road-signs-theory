@@ -1,0 +1,197 @@
+openapi: 3.0.0
+info:
+  title: Road Signs Catalog API
+  description: Довідник дорожніх знаків (модульний моноліт)
+  version: 1.0.0
+servers:
+  - url: http://localhost:5000
+    description: Локальний сервер розробки
+tags:
+  - name: Health
+    description: Перевірка стану системи
+  - name: Signs
+    description: CRUD операції для дорожніх знаків
+
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Перевірка життєздатності
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+  /signs:
+    get:
+      tags: [Signs]
+      summary: Отримати список усіх знаків
+      responses:
+        '200':
+          description: Успішне повернення списку
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SignResponse'
+        '500':
+          $ref: '#/components/responses/ErrorResponse'
+    post:
+      tags: [Signs]
+      summary: Створити новий дорожній знак
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignCreateRequest'
+      responses:
+        '201':
+          description: Знак успішно створено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignResponse'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /signs/{signId}:
+    parameters:
+      - name: signId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int32
+        description: ID дорожнього знаку
+    get:
+      tags: [Signs]
+      summary: Отримати деталі знаку за ID
+      responses:
+        '200':
+          description: Успішне повернення знаку
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignResponse'
+        '404':
+          description: Знак не знайдено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    patch:
+      tags: [Signs]
+      summary: Часткове оновлення знаку
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignUpdateRequest'
+      responses:
+        '200':
+          description: Знак успішно оновлено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignResponse'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+    delete:
+      tags: [Signs]
+      summary: Видалити знак
+      responses:
+        '204':
+          description: Знак успішно видалено (без тіла відповіді)
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+components:
+  schemas:
+    SignCreateRequest:
+      type: object
+      required:
+        - name
+        - category
+      properties:
+        name:
+          type: string
+          example: Обмеження швидкості 50
+        category:
+          type: string
+          example: Заборонні
+        description:
+          type: string
+          example: Максимальна швидкість 50 км/год
+
+    SignUpdateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          example: Нова назва
+        description:
+          type: string
+          example: Оновлений опис
+
+    SignResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: Обмеження швидкості 50
+        category:
+          type: string
+          example: Заборонні
+        description:
+          type: string
+          example: Максимальна швидкість 50 км/год
+        image_url:
+          type: string
+          nullable: true
+          example: null
+
+    ErrorResponse: # Єдиний формат помилок
+      type: object
+      required:
+        - error
+        - code
+      properties:
+        error:
+          type: string
+          example: Validation Error
+        code:
+          type: string
+          example: SIGN_NAME_REQUIRED
+        details:
+          type: array
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+              message:
+                type: string
+          nullable: true
+
+  responses:
+    ErrorResponse:
+      description: Помилка (валідація, конфлікт, не знайдено)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'

@@ -34,3 +34,41 @@ class RoadSignRepository:
         row = conn.execute("SELECT * FROM road_signs WHERE id = ?", (sign_id,)).fetchone()
         conn.close()
         return _convert_to_road_sign(row) if row else None
+
+    def create(self, name: str, category: str, description: str = None) -> RoadSign:
+        """Створити новий знак і повернути його об'єкт."""
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO road_signs (name, category, description) VALUES (?, ?, ?)",
+            (name, category, description)
+        )
+        last_id = cursor.lastrowid
+        conn.commit()
+
+        # Отримуємо створений об'єкт, щоб повернути його у відповідь
+        created_row = conn.execute("SELECT * FROM road_signs WHERE id = ?", (last_id,)).fetchone()
+        conn.close()
+        return _convert_to_road_sign(created_row)
+
+    def update(self, sign_id: int, data: dict) -> None:
+        """Оновити наявний знак за ID."""
+        conn = get_db_connection()
+        # Створюємо динамічний SQL-запит
+        set_clauses = [f"{k} = ?" for k in data.keys()]
+        query = f"UPDATE road_signs SET {', '.join(set_clauses)} WHERE id = ?"
+        params = list(data.values()) + [sign_id]
+
+        conn.execute(query, params)
+        conn.commit()
+        conn.close()
+
+    def delete(self, sign_id: int) -> int:
+        """Видалити знак за ID і повернути кількість видалених рядків (0 або 1)."""
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM road_signs WHERE id = ?", (sign_id,))
+        rows_affected = cursor.rowcount
+        conn.commit()
+        conn.close()
+        return rows_affected

@@ -122,7 +122,7 @@ def admin_required():
     return wrapper
 
 
-# --- Ендпоінти для знаків ---
+# --- ЕНДПОІНТИ ДЛЯ ЗНАКІВ ---
 @app.route('/')
 def home():
     return jsonify({"message": "Довідник дорожніх знаків API"})
@@ -162,6 +162,78 @@ def get_sign_by_id(sign_id):
             return jsonify({'message': 'success', 'data': sign.to_dict()})  # ВИКОРИСТОВУЄМО .to_dict()
         else:
             return jsonify({'error': 'Sign not found'}), 404
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/signs', methods=['POST'])
+@admin_required()
+def create_sign():
+    data = request.get_json()
+    name = data.get('name')
+    category = data.get('category')
+    description = data.get('description')
+
+    if not name or not category:
+        return jsonify({
+            "error": "Validation Error",
+            "code": "SIGN_FIELDS_REQUIRED",
+            "details": [{"field": "name", "message": "Name and category are required"}]
+        }), 400
+
+    try:
+        # ВИКОРИСТОВУЄМО РЕПОЗИТОРІЙ
+        new_sign = sign_repo.create(name, category, description)
+        return jsonify({'message': 'success', 'data': new_sign.to_dict()}), 201
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/signs/id/<int:sign_id>', methods=['PATCH'])
+@admin_required()
+def update_sign(sign_id):
+    data = request.get_json()
+
+    # Перевірка, чи передано хоча б одне поле для оновлення
+    if not data:
+        return jsonify({
+            "error": "Validation Error",
+            "code": "NO_DATA_PROVIDED",
+            "details": [{"message": "No fields provided for update"}]
+        }), 400
+
+    try:
+        # 1. Перевіряємо, чи існує
+        existing_sign = sign_repo.get_by_id(sign_id)
+        if not existing_sign:
+            return jsonify({'error': 'Sign not found'}), 404
+
+        # 2. Оновлюємо в базі (репозиторій)
+        sign_repo.update(sign_id, data)
+
+        # 3. Повертаємо оновлений об'єкт
+        updated_sign = sign_repo.get_by_id(sign_id)
+
+        return jsonify({'message': 'success', 'data': updated_sign.to_dict()}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/signs/id/<int:sign_id>', methods=['DELETE'])
+@admin_required()
+def delete_sign(sign_id):
+    try:
+        # ВИКОРИСТОВУЄМО РЕПОЗИТОРІЙ
+        rows_deleted = sign_repo.delete(sign_id)
+
+        if rows_deleted == 0:
+            return jsonify({'error': 'Sign not found'}), 404
+
+        # 204 No Content - ідеальна відповідь для DELETE
+        return '', 204
+
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -259,6 +331,12 @@ def promote_user_to_admin(user_id):
             return jsonify({'error': 'User not found'}), 404
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Повертає статус системи"""
+    return jsonify({"status": "ok"})
 
 
 if __name__ == '__main__':
