@@ -45,7 +45,7 @@ class UserRepository:
         conn = get_db_connection()
         row = conn.execute('SELECT * FROM users WHERE username = ?', (username,)).fetchone()
         conn.close()
-        return row  # row - це вже dict, завдяки row_factory
+        return row
 
     def create(self, username: str, hashed_password: str, role: str = 'guest') -> None:
         """Створити нового користувача"""

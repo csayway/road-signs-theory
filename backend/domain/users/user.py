@@ -1,5 +1,4 @@
 class User:
-    # ОНОВЛЕНО: 'email' тепер опціональний (email: str = None)
     def __init__(self, id: int, username: str, email: str = None, role: str = "guest"):
         self.id = id
         self.username = username
@@ -14,7 +13,6 @@ class User:
         """Повисити права до адміністратора"""
         self.role = "admin"
 
-    # НОВИЙ МЕТОД
     def to_dict(self):
         """Конвертує об'єкт в словник для JSON-серіалізації"""
         return {
@@ -27,7 +25,6 @@ class User:
 
 
 class Admin(User):
-    # ОНОВЛЕНО: 'email' тепер опціональний (email: str = None)
     def __init__(self, id: int, username: str, email: str = None):
         super().__init__(id, username, email, "admin")
 

@@ -1,335 +1,259 @@
 const API_URL = 'http://localhost:5000';
-let currentUsers = [];
+let consecutiveFailures = 0;
+const FAILURE_THRESHOLD = 3;
 
-// --- НОВІ ФУНКЦІЇ ДЛЯ РОБОТИ З ТОКЕНОМ (localStorage) ---
+// === 1. SMART CLIENT (Resilient Fetch) ===
 
-function saveToken(token) {
-    localStorage.setItem('access_token', token);
-}
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-function getToken() {
-    return localStorage.getItem('access_token');
-}
+// Експоненційний Backoff з Jitter (випадковістю)
+const getBackoffDelay = (attempt, baseDelayMs = 300) => {
+    const jitter = Math.floor(Math.random() * 100);
+    return (baseDelayMs * (2 ** attempt)) + jitter;
+};
 
-function removeToken() {
-    localStorage.removeItem('access_token');
-    localStorage.removeItem('user'); // Також чистимо інфо про юзера
-}
+// Головна функція-обгортка для запитів
+async function fetchWithResilience(url, options = {}) {
+    const { retries = 3, timeoutMs = 5000, idempotencyKey = null, ...fetchOptions } = options;
 
-function saveUser(user) {
-    localStorage.setItem('user', JSON.stringify(user));
-}
+    const headers = new Headers(fetchOptions.headers || {});
+    if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
 
-function getUser() {
-    const user = localStorage.getItem('user');
-    return user ? JSON.parse(user) : null;
-}
+    // Додаємо X-Request-Id для відстеження (кореляції)
+    if (!headers.has('X-Request-Id')) headers.set('X-Request-Id', crypto.randomUUID());
 
-function isLoggedIn() {
-    return !!getToken();
-}
+    // Додаємо Idempotency-Key для безпечних повторів POST-запитів
+    if (idempotencyKey) headers.set('Idempotency-Key', idempotencyKey);
 
-// --- НОВА ФУНКЦІЯ ДЛЯ ОНОВЛЕННЯ UI ---
+    // Автоматично додаємо токен авторизації
+    const token = localStorage.getItem('access_token');
+    if (token) headers.append('Authorization', `Bearer ${token}`);
 
-function updateUI() {
-    const userTab = document.querySelector('.tab[onclick="switchTab(\'users\')"]');
-    const authStatus = document.getElementById('authStatus');
-    const authForm = document.getElementById('authForm');
-    const authUsername = document.getElementById('authUsername');
+    let attempt = 0;
+    while (attempt <= retries) {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
-    if (isLoggedIn()) {
-        const user = getUser();
+        try {
+            console.log(`📡 Запит ${url} (Спроба ${attempt + 1}/${retries + 1})`);
+            const res = await fetch(url, { ...fetchOptions, headers, signal: controller.signal });
+            clearTimeout(timeoutId);
 
-        // Показуємо статус "Ви увійшли як..."
-        authStatus.style.display = 'block';
-        authForm.style.display = 'none';
-        authUsername.textContent = user.username;
+            // Успіх
+            if (res.ok) {
+                resetDegradedMode();
+                return res;
+            }
 
-        // Показуємо вкладку "Користувачі" ТІЛЬКИ якщо це адмін
-        if (user && user.role === 'admin') {
-            userTab.style.display = 'block';
-        } else {
-            userTab.style.display = 'none';
+            // 429 Too Many Requests: чекаємо стільки, скільки сказав сервер
+            if (res.status === 429) {
+                const retryAfter = res.headers.get('Retry-After');
+                const wait = (retryAfter ? parseInt(retryAfter) : 1) * 1000;
+                console.warn(`⚠ 429. Чекаємо ${wait}мс`);
+                await sleep(wait);
+                continue; // Повторюємо запит
+            }
+
+            // 5xx Server Errors: пробуємо ще раз із затримкою
+            if (res.status >= 500 && attempt < retries) {
+                const delay = getBackoffDelay(attempt);
+                console.warn(` Помилка ${res.status}. Ретрай через ${delay}мс`);
+                await sleep(delay);
+                attempt++;
+                continue;
+            }
+
+            // 401 Unauthorized: токен протух, виходимо
+            if (res.status === 401) logout();
+
+            // Інші помилки клієнта (400, 404 тощо) повертаємо відразу
+            const errData = await res.json();
+            handleDegradedMode();
+            return Promise.reject(errData);
+
+        } catch (err) {
+            clearTimeout(timeoutId);
+            console.error(' Помилка:', err.name === 'AbortError' ? 'Timeout' : err);
+
+            // Мережеві помилки (або таймаут) теж пробуємо повторити
+            if (attempt < retries) {
+                await sleep(getBackoffDelay(attempt));
+                attempt++;
+            } else {
+                handleDegradedMode();
+                throw err;
+            }
         }
-    } else {
-        // Ховаємо статус
-        authStatus.style.display = 'none';
-        authForm.style.display = 'block';
-
-        // Ховаємо вкладку "Користувачі"
-        userTab.style.display = 'none';
     }
 }
 
-// --- НОВА ФУНКЦІЯ ДЛЯ ЗАХИЩЕНИХ ЗАПИТІВ ---
+// === 2. HELPER FUNCTIONS (Idempotency & UI) ===
 
-async function fetchProtected(url, options = {}) {
-    const token = getToken();
+// Генерує унікальний ключ на основі даних (щоб не дублювати створення)
+async function generateIdempotencyKey(payload) {
+    const str = JSON.stringify(payload);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+    return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('').substring(0, 16);
+}
 
-    // Створюємо заголовки, якщо їх немає
-    if (!options.headers) {
-        options.headers = new Headers();
-    }
-
-    // Додаємо токен
-    if (token) {
-        options.headers.append('Authorization', `Bearer ${token}`);
-    }
-
-    // Додаємо 'Content-Type' для POST запитів, якщо потрібно
-    if (options.method === 'POST' && !options.headers.has('Content-Type')) {
-        options.headers.append('Content-Type', 'application/json');
-    }
-
-    try {
-        const res = await fetch(url, options);
-
-        if (res.status === 401 || res.status === 403) {
-            // Якщо токен недійсний або його немає - "викидаємо" юзера
-            alert('Помилка авторизації. Будь ласка, увійдіть знову.');
-            logout();
-            return null; // Повертаємо null, щоб обробник не продовжив роботу
-        }
-
-        return res;
-    } catch (err) {
-        console.error('Fetch error:', err);
-        throw err; // Кидаємо помилку далі
+// Вмикає "Деградований режим" (банер про перевантаження)
+function handleDegradedMode() {
+    consecutiveFailures++;
+    if (consecutiveFailures >= FAILURE_THRESHOLD) {
+        const banner = document.getElementById('degradedBanner');
+        if (banner) banner.style.display = 'block';
+        document.querySelectorAll('button').forEach(b => b.disabled = true);
     }
 }
 
-
-// --- ОНОВЛЕНІ ФУНКЦІЇ ---
-
-function setLoading(elementId, state) {
-    document.getElementById(elementId).style.display = state ? 'block' : 'none';
+// Вимикає "Деградований режим"
+function resetDegradedMode() {
+    consecutiveFailures = 0;
+    const banner = document.getElementById('degradedBanner');
+    if (banner) banner.style.display = 'none';
+    document.querySelectorAll('button').forEach(b => b.disabled = false);
 }
 
-function switchTab(tabName) {
-    document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
-    document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
-    document.getElementById(tabName + '-tab').classList.add('active');
-
-    // Знаходимо кнопку табу і робимо її активною
-    const tabButton = document.querySelector(`.tab[onclick="switchTab('${tabName}')"]`);
-    if(tabButton) tabButton.classList.add('active');
-
-    if (tabName === 'users') loadAllUsers();
-}
+// === 3. APP LOGIC ===
 
 async function loadAllSigns() {
     setLoading('loading', true);
     try {
-        // Це публічний ендпоінт, токен не потрібен
-        const res = await fetch(`${API_URL}/signs`);
+        const res = await fetchWithResilience(`${API_URL}/signs`);
         const data = await res.json();
         displaySigns(data.data);
     } catch (err) {
-        // Пишемо помилку у контейнер для ЗНАКІВ
-        document.getElementById('signsList').innerHTML = '<p>Помилка завантаження</p>';
+        document.getElementById('signsList').innerHTML = `<p style="color:red">Помилка: ${err.error || err.message}</p>`;
     }
     setLoading('loading', false);
+}
+
+// Тестова функція для перевірки Ідемпотентності
+async function createTestSign() {
+    const payload = {
+        name: "Тест Ідемпотентності " + Math.floor(Math.random() * 100),
+        category: "Тестові",
+        description: "Цей запит не створить дублікатів"
+    };
+    const key = await generateIdempotencyKey(payload);
+    console.log(" Generated Key:", key);
+
+    try {
+        const res = await fetchWithResilience(`${API_URL}/signs`, {
+            method: 'POST',
+            body: JSON.stringify(payload),
+            idempotencyKey: key
+        });
+        const data = await res.json();
+        alert(`Успіх! ID: ${data.data.id}`);
+        loadAllSigns();
+    } catch (err) {
+        alert(`Помилка: ${err.error || 'Request Failed'}`);
+    }
+}
+
+// --- Стандартні функції (без змін логіки, але з використанням нового fetch) ---
+
+function setLoading(id, state) { const el = document.getElementById(id); if(el) el.style.display = state ? 'block' : 'none'; }
+
+function displaySigns(signs) {
+    const c = document.getElementById('signsList'); c.innerHTML = '';
+    if(!signs) return;
+    signs.forEach(s => {
+        const d = document.createElement('div'); d.className = 'sign-card';
+        d.innerHTML = `<span class="category">${s.category}</span><h3>${s.name}</h3><p>${s.description}</p>`;
+        c.appendChild(d);
+    });
 }
 
 async function loadSignsByCategory(cat) {
     setLoading('loading', true);
     try {
-        // Це публічний ендпоінт
-        const res = await fetch(`${API_URL}/signs/${cat}`);
+        const res = await fetchWithResilience(`${API_URL}/signs/${cat}`);
         const data = await res.json();
         displaySigns(data.data);
-    } catch (err) {
-        document.getElementById('signsList').innerHTML = '<p>Помилка завантаження</p>';
-    }
+    } catch (e) {}
     setLoading('loading', false);
 }
 
-// Безпечна displaySigns (без змін)
-function displaySigns(signs) {
-    const container = document.getElementById('signsList');
-    container.innerHTML = '';
-    if (!signs || !signs.length) {
-        container.innerHTML = '<p>Знаки не знайдено</p>';
-        return;
-    }
-    signs.forEach(sign => {
-        const card = document.createElement('div');
-        card.className = 'sign-card';
-        const category = document.createElement('span');
-        category.className = 'category';
-        category.textContent = sign.category;
-        const name = document.createElement('h3');
-        name.textContent = sign.name;
-        const description = document.createElement('p');
-        description.textContent = sign.description;
-        card.appendChild(category);
-        card.appendChild(name);
-        card.appendChild(description);
-        container.appendChild(card);
-    });
+function switchTab(tab) {
+    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.getElementById(`${tab}-tab`).classList.add('active');
+
+    // Оновлення стилів кнопок
+    const btns = document.querySelectorAll('.tab');
+    if (tab === 'signs') { btns[0].classList.add('active'); loadAllSigns(); }
+    if (tab === 'users') { btns[1].classList.add('active'); loadAllUsers(); }
 }
 
-// ОНОВЛЕНО: Використовуємо fetchProtected
 async function loadAllUsers() {
-    setLoading('usersLoading', true);
     try {
-        // ЦЕ ЗАХИЩЕНИЙ ЗАПИТ
-        const res = await fetchProtected(`${API_URL}/users`);
-        if (!res) return; // Вихід, якщо була помилка авторизації
-
+        const res = await fetchWithResilience(`${API_URL}/users`);
         const data = await res.json();
-        if(res.ok) {
-            currentUsers = data.data;
-            displayUsers(currentUsers);
-        } else {
-            document.getElementById('usersList').innerHTML = `<p>Помилка: ${data.error || data.msg || 'Невідома помилка'}</p>`;
-        }
-    } catch (err) {
-        document.getElementById('usersList').innerHTML = '<p>Помилка завантаження користувачів</p>';
-    }
-    setLoading('usersLoading', false);
+        displayUsers(data.data);
+    } catch(e) {}
 }
 
-// Безпечна displayUsers (без змін)
 function displayUsers(users) {
-    const container = document.getElementById('usersList');
-    container.innerHTML = '';
-    if (!users || !users.length) {
-        container.innerHTML = '<p>Користувачі не знайдені</p>';
-        return;
-    }
-    users.forEach(user => {
-        const card = document.createElement('div');
-        card.className = 'user-card';
-        const info = document.createElement('div');
-        const username = document.createElement('strong');
-        username.textContent = user.username;
-        const email = document.createTextNode(` (Роль: ${user.role}) `); // Оновив текст
-        const badge = document.createElement('span');
-        badge.className = user.is_admin ? 'admin-badge' : 'guest-badge';
-        badge.textContent = user.is_admin ? 'Адміністратор' : 'Гість';
-        info.appendChild(username);
-        // info.appendChild(email); // Можна додати, якщо треба
-        info.appendChild(badge);
-        const promoteBtn = document.createElement('button');
-        promoteBtn.className = 'promote-btn';
-        promoteBtn.textContent = user.is_admin ? 'Вже адмін' : 'Зробити адміном';
-        promoteBtn.disabled = user.is_admin;
-        promoteBtn.addEventListener('click', () => {
-            promoteUser(user.id);
-        });
-        card.appendChild(info);
-        card.appendChild(promoteBtn);
-        container.appendChild(card);
+    const c = document.getElementById('usersList'); c.innerHTML = '';
+    users.forEach(u => {
+        const d = document.createElement('div'); d.className = 'user-card';
+        d.innerHTML = `<div><strong>${u.username}</strong> ${u.role}</div>`;
+        const b = document.createElement('button'); b.className = 'promote-btn';
+        b.textContent = u.is_admin ? 'Вже адмін' : 'Підвищити';
+        b.disabled = u.is_admin;
+        b.onclick = () => promoteUser(u.id);
+        d.appendChild(b);
+        c.appendChild(d);
     });
 }
 
-// ОНОВЛЕНО: Використовуємо fetchProtected
 async function promoteUser(id) {
-    try {
-        // ЦЕ ЗАХИЩЕНИЙ ЗАПИТ
-        const res = await fetchProtected(`${API_URL}/users/${id}/promote`, { method: 'POST' });
-        if (!res) return; // Вихід, якщо була помилка авторизації
-
-        const result = await res.json();
-        if (res.ok) {
-            alert('Користувача підвищено до адміністратора!');
-            loadAllUsers(); // Оновлюємо список
-        } else {
-            alert(`Помилка: ${result.error}`);
-        }
-    } catch (err) {
-        alert('Сталася помилка при підвищенні прав');
-    }
+    try { await fetchWithResilience(`${API_URL}/users/${id}/promote`, {method:'POST'}); loadAllUsers(); } catch(e){}
 }
 
-function openModal() {
-    document.getElementById('authModal').style.display = 'flex';
-    updateUI(); // Оновлюємо вигляд модалки при кожному відкритті
-}
-
-function closeModal() {
-    document.getElementById('authModal').style.display = 'none';
-}
-
-// --- НОВА ЛОГІКА ВХОДУ / РЕЄСТРАЦІЇ / ВИХОДУ ---
+function openModal() { document.getElementById('authModal').style.display = 'flex'; updateUI(); }
+function closeModal() { document.getElementById('authModal').style.display = 'none'; }
 
 async function login() {
-    const username = document.getElementById('username').value;
-    const password = document.getElementById('password').value;
-
-    if (!username || !password) {
-        alert('Введіть ім\'я користувача та пароль');
-        return;
-    }
-
+    const u = document.getElementById('username').value;
+    const p = document.getElementById('password').value;
     try {
-        const res = await fetch(`${API_URL}/login`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, password })
-        });
-
-        const data = await res.json();
-
-        if (res.ok) {
-            // ВХІД УСПІШНИЙ
-            saveToken(data.access_token);
-            saveUser(data.user);
-            alert('Вхід виконано успішно!');
-            closeModal();
-            updateUI(); // Оновлюємо таби
-        } else {
-            // ПОМИЛКА ВХОДУ
-            alert(`Помилка входу: ${data.error}`);
-        }
-    } catch (err) {
-        alert('Сталася помилка мережі');
-    }
+        const res = await fetch(`${API_URL}/login`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({username:u, password:p})});
+        const d = await res.json();
+        if(res.ok) { localStorage.setItem('access_token', d.access_token); localStorage.setItem('user', JSON.stringify(d.user)); closeModal(); updateUI(); }
+        else alert(d.error);
+    } catch(e) {}
 }
 
 async function register() {
-    const username = document.getElementById('username').value;
-    const password = document.getElementById('password').value;
+    const u = document.getElementById('username').value;
+    const p = document.getElementById('password').value;
+    try { await fetch(`${API_URL}/register`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({username:u, password:p})}); alert('OK'); } catch(e){}
+}
 
-    if (!username || !password) {
-        alert('Введіть ім\'я користувача та пароль');
-        return;
-    }
+function logout() { localStorage.removeItem('access_token'); localStorage.removeItem('user'); updateUI(); switchTab('signs'); }
 
-    try {
-        const res = await fetch(`${API_URL}/register`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, password })
-        });
+function updateUI() {
+    const user = JSON.parse(localStorage.getItem('user'));
+    const statusDiv = document.getElementById('authStatus');
+    const formDiv = document.getElementById('authForm');
 
-        const data = await res.json();
+    if (user) {
+        statusDiv.style.display = 'block';
+        formDiv.style.display = 'none';
+        document.getElementById('authUsername').textContent = user.username;
 
-        if (res.status === 201) {
-            // РЕЄСТРАЦІЯ УСПІШНА
-            alert('Користувача успішно створено! Тепер можете увійти.');
-            // (Опціонально) можна одразу логінити юзера
-        } else {
-            // ПОМИЛКА РЕЄСТРАЦІЇ
-            alert(`Помилка реєстрації: ${data.error}`);
-        }
-    } catch (err) {
-        alert('Сталася помилка мережі');
+        // Керування видимістю вкладки "Користувачі"
+        const userTabBtn = document.querySelectorAll('.tab')[1];
+        if (userTabBtn) userTabBtn.style.display = user.role === 'admin' ? 'block' : 'none';
+    } else {
+        statusDiv.style.display = 'none';
+        formDiv.style.display = 'block';
+        const userTabBtn = document.querySelectorAll('.tab')[1];
+        if (userTabBtn) userTabBtn.style.display = 'none';
     }
 }
 
-function logout() {
-    removeToken();
-    alert('Ви вийшли з системи.');
-    updateUI();
-    // Опціонально: перемикаємо на головну вкладку, якщо ми були на адмінській
-    switchTab('signs');
-}
-
-
-// ОНОВЛЕНО: При завантаженні сторінки
-window.onload = () => {
-    loadAllSigns(); // Завантажуємо знаки
-    updateUI();     // Оновлюємо UI (ховаємо адмін-вкладку, якщо треба)
-};
+window.onload = () => { loadAllSigns(); updateUI(); };

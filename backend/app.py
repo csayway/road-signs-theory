@@ -1,27 +1,36 @@
 import sqlite3
 import os
-from flask import Flask, jsonify, request
+import time
+import random
+import uuid
+from flask import Flask, jsonify, request, make_response, g
 from flask_cors import CORS
 from flask_bcrypt import Bcrypt
 from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required, JWTManager
 from functools import wraps
+from werkzeug.exceptions import HTTPException
 
+# Імпорти репозиторіїв
 from repositories.road_sign import RoadSignRepository
 from repositories.user import UserRepository
 
-# Імпорти доменних моделей (для демонстрації)
+# Імпорти доменних моделей
 from domain.catalog.road_sign import RoadSign
 from domain.users.user import User
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {
-    "origins": "*",
-    "allow_headers": ["Content-Type", "Authorization"]
-}})
 
-# --- Налаштування ---
+# --- КОНФІГУРАЦІЯ ---
 app.config["JWT_SECRET_KEY"] = "ezhi"
 app.config["SECRET_KEY"] = "super-secret-flask-key-change-me"
+
+# Дозволяємо браузеру бачити спеціальні заголовки (Retry-After, X-Request-Id)
+CORS(app, resources={r"/*": {
+    "origins": "*",
+    "allow_headers": ["Content-Type", "Authorization", "Idempotency-Key", "X-Request-Id"],
+    "expose_headers": ["Retry-After", "X-Request-Id"]
+}})
+
 jwt = JWTManager(app)
 bcrypt = Bcrypt(app)
 
@@ -30,6 +39,92 @@ sign_repo = RoadSignRepository()
 user_repo = UserRepository()
 DATABASE_PATH = os.path.join(os.path.dirname(__file__), 'data', 'road_signs.db')
 
+# --- In-Memory сховища (для демонстрації) ---
+idempotency_store = {}  # Key -> {status, response_body}
+rate_limit_store = {}  # IP -> {count, start_time}
+RATE_LIMIT_WINDOW = 10
+MAX_REQUESTS = 20
+
+
+# --- MIDDLEWARE: X-Request-Id ---
+@app.before_request
+def add_request_id():
+    # Беремо ID з заголовка клієнта або генеруємо новий
+    request_id = request.headers.get("X-Request-Id") or str(uuid.uuid4())
+    g.request_id = request_id
+
+
+@app.after_request
+def inject_request_id(response):
+    # Додаємо ID у відповідь для кореляції логів
+    response.headers["X-Request-Id"] = g.get("request_id", "unknown")
+    return response
+
+
+# --- MIDDLEWARE: Єдиний формат помилки ---
+@app.errorhandler(Exception)
+def handle_exception(e):
+    code = 500
+    error_name = "Internal Server Error"
+    details = str(e)
+
+    if isinstance(e, HTTPException):
+        code = e.code
+        error_name = e.name
+        details = e.description
+
+    return jsonify({
+        "error": error_name,
+        "code": getattr(e, "code", "UNKNOWN_ERROR"),
+        "details": details,
+        "requestId": g.get("request_id")
+    }), code
+
+
+# --- MIDDLEWARE: Rate Limiting & Fault Injection (Хаос) ---
+@app.before_request
+def check_limits_and_chaos():
+    # 1. Rate Limiting
+    ip = request.remote_addr
+    current_time = time.time()
+
+    record = rate_limit_store.get(ip, {"count": 0, "start_time": current_time})
+
+    if current_time - record["start_time"] > RATE_LIMIT_WINDOW:
+        record = {"count": 1, "start_time": current_time}
+    else:
+        record["count"] += 1
+
+    rate_limit_store[ip] = record
+
+    if record["count"] > MAX_REQUESTS:
+        retry_after = 5
+        resp = make_response(jsonify({
+            "error": "Too Many Requests",
+            "code": "RATE_LIMIT_EXCEEDED",
+            "details": "Please wait before retrying",
+            "requestId": g.request_id
+        }), 429)
+        resp.headers["Retry-After"] = str(retry_after)
+        return resp
+
+    # 2. Fault Injection (Тільки для POST/PATCH, щоб тестувати ретраї)
+    if request.method in ['POST', 'PATCH'] and "signs" in request.path:
+        r = random.random()
+        # 15% шанс затримки (simulated network lag)
+        if r < 0.15:
+            time.sleep(random.uniform(1.2, 2.0))
+        # 10% шанс помилки 503/500
+        if r > 0.90:
+            err_type = "Service Unavailable" if random.random() < 0.5 else "Unexpected Error"
+            status = 503 if err_type == "Service Unavailable" else 500
+            # Викидаємо помилку, яку перехопить handle_exception, або повертаємо response вручну
+            # Тут краще вручну, щоб контролювати статус
+            return make_response(jsonify({
+                "error": err_type,
+                "requestId": g.request_id
+            }), status)
+
 
 def init_database():
     """Ініціалізація бази даних"""
@@ -37,68 +132,24 @@ def init_database():
     conn = sqlite3.connect(DATABASE_PATH)
     cursor = conn.cursor()
 
-    # --- ОНОВЛЕНО: Повні схеми таблиць ---
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS road_signs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            category TEXT NOT NULL,
-            description TEXT
-        )
-    ''')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL, 
-            role TEXT DEFAULT 'guest',
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
+    cursor.execute(
+        '''CREATE TABLE IF NOT EXISTS road_signs (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, category TEXT NOT NULL, description TEXT)''')
+    cursor.execute(
+        '''CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, role TEXT DEFAULT 'guest', created_at DATETIME DEFAULT CURRENT_TIMESTAMP)''')
 
     cursor.execute("SELECT COUNT(*) FROM road_signs")
-    count_signs = cursor.fetchone()[0]
+    if cursor.fetchone()[0] == 0:
+        signs = [('Стоп', 'Заборонні', 'Зупинитися перед знаком'),
+                 ('Головна дорога', 'Пріоритету', 'Перевага на перехресті')]
+        cursor.executemany("INSERT INTO road_signs (name, category, description) VALUES (?, ?, ?)", signs)
+
     cursor.execute("SELECT COUNT(*) FROM users")
-    count_users = cursor.fetchone()[0]
-
-    if count_signs == 0:
-        signs = [
-            ('Стоп', 'Заборонні', 'Зупинитися перед знаком'),
-            ('Головна дорога', 'Пріоритету', 'Перевага на перехресті'),
-            ('Пішохідний перехід', 'Інформаційні', 'Місце переходу для пішоходів'),
-            ('Обмеження швидкості 50', 'Заборонні', 'Максимальна швидкість 50 км/год'),
-            ('Поворот праворуч', 'Попереджувальні', 'Попередження про поворот'),
-            ('Діти', 'Попереджувальні', 'Можлива поява дітей на дорозі'),
-            ('Парковка', 'Інформаційні', 'Місце для парковки'),
-            ('Рух заборонено', 'Заборонні', 'Заборона руху всіх транспортних засобів')
-        ]
-
-        cursor.executemany(
-            "INSERT INTO road_signs (name, category, description) VALUES (?, ?, ?)",
-            signs
-        )
-        print(" Дані дорожніх знаків успішно додані до бази!")
-
-    if count_users == 0:
-        users = [
-            ('admin', bcrypt.generate_password_hash('admin123').decode('utf-8'), 'admin'),
-            ('user1', bcrypt.generate_password_hash('user123').decode('utf-8'), 'guest'),
-        ]
-        cursor.executemany(
-            "INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
-            users
-        )
-        print("Тестові користувачі (з хешованими паролями) додані до бази!")
+    if cursor.fetchone()[0] == 0:
+        users = [('admin', bcrypt.generate_password_hash('admin123').decode('utf-8'), 'admin')]
+        cursor.executemany("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)", users)
 
     conn.commit()
     conn.close()
-
-
-# --- ВИДАЛЕНО ---
-# get_db_connection() - переїхав у repositories/base.py
-# convert_to_road_sign() - переїхав у repositories/road_sign.py
-# convert_to_user() - переїхав у repositories/user.py
-# ---
 
 
 # Функція-декоратор для перевірки прав адміна
@@ -108,251 +159,137 @@ def admin_required():
         @jwt_required()
         def decorator(*args, **kwargs):
             current_user_id_str = get_jwt_identity()
-
-            # ВИКОРИСТОВУЄМО РЕПОЗИТОРІЙ
             user = user_repo.get_by_id(int(current_user_id_str))
-
             if user and user.is_admin():
                 return fn(*args, **kwargs)
             else:
-                return jsonify({"error": "Admin access required"}), 403
+                return jsonify({"error": "Admin access required", "requestId": g.get("request_id")}), 403
 
         return decorator
 
     return wrapper
 
 
-# --- ЕНДПОІНТИ ДЛЯ ЗНАКІВ ---
-@app.route('/')
-def home():
-    return jsonify({"message": "Довідник дорожніх знаків API"})
+# --- ROUTES ---
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    # Симулюємо іноді довгий запит для перевірки таймауту клієнта
+    if random.random() < 0.1:
+        time.sleep(2)
+    return jsonify({"status": "ok", "requestId": g.request_id})
 
 
 @app.route('/signs', methods=['GET'])
 def get_all_signs():
-    try:
-        # ВИКОРИСТОВУЄМО РЕПОЗИТОРІЙ
-        road_signs = sign_repo.get_all()
-        # ВИКОРИСТОВУЄМО .to_dict()
-        return jsonify({'message': 'success', 'data': [s.to_dict() for s in road_signs]})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+    return jsonify({'message': 'success', 'data': [s.to_dict() for s in sign_repo.get_all()]})
 
 
 @app.route('/signs/<category>', methods=['GET'])
 def get_signs_by_category(category):
-    try:
-        # ВИКОРИСТОВУЄМО РЕПОЗИТОРІЙ
-        road_signs = sign_repo.get_by_category(category)
-        return jsonify({
-            'message': 'success',
-            'category': category,
-            'data': [s.to_dict() for s in road_signs]  # ВИКОРИСТОВУЄМО .to_dict()
-        })
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+    return jsonify({'message': 'success', 'data': [s.to_dict() for s in sign_repo.get_by_category(category)]})
 
 
 @app.route('/signs/id/<int:sign_id>', methods=['GET'])
 def get_sign_by_id(sign_id):
-    try:
-        # ВИКОРИСТОВУЄМО РЕПОЗИТОРІЙ
-        sign = sign_repo.get_by_id(sign_id)
-        if sign:
-            return jsonify({'message': 'success', 'data': sign.to_dict()})  # ВИКОРИСТОВУЄМО .to_dict()
-        else:
-            return jsonify({'error': 'Sign not found'}), 404
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+    sign = sign_repo.get_by_id(sign_id)
+    if sign: return jsonify({'message': 'success', 'data': sign.to_dict()})
+    return jsonify({'error': 'Sign not found'}), 404
 
 
+# --- POST З ІДЕМПОТЕНТНІСТЮ ---
 @app.route('/signs', methods=['POST'])
 @admin_required()
 def create_sign():
+    # 1. Перевірка ключа ідемпотентності
+    idem_key = request.headers.get("Idempotency-Key")
+    if not idem_key:
+        return jsonify({
+            "error": "Validation Error",
+            "code": "IDEMPOTENCY_KEY_REQUIRED",
+            "details": "Header Idempotency-Key is missing"
+        }), 400
+
+    # 2. Перевірка кешу
+    if idem_key in idempotency_store:
+        print(f" Повертаємо кешовану відповідь для {idem_key}")
+        return jsonify(idempotency_store[idem_key]), 201
+
     data = request.get_json()
     name = data.get('name')
     category = data.get('category')
     description = data.get('description')
 
     if not name or not category:
-        return jsonify({
-            "error": "Validation Error",
-            "code": "SIGN_FIELDS_REQUIRED",
-            "details": [{"field": "name", "message": "Name and category are required"}]
-        }), 400
+        return jsonify({"error": "Validation Error"}), 400
 
-    try:
-        # ВИКОРИСТОВУЄМО РЕПОЗИТОРІЙ
-        new_sign = sign_repo.create(name, category, description)
-        return jsonify({'message': 'success', 'data': new_sign.to_dict()}), 201
+    new_sign = sign_repo.create(name, category, description)
+    response_data = {'message': 'success', 'data': new_sign.to_dict()}
 
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+    # 3. Збереження результату
+    idempotency_store[idem_key] = response_data
+
+    return jsonify(response_data), 201
 
 
-@app.route('/signs/id/<int:sign_id>', methods=['PATCH'])
+@app.route('/signs/<int:sign_id>', methods=['PATCH'])
 @admin_required()
 def update_sign(sign_id):
     data = request.get_json()
-
-    # Перевірка, чи передано хоча б одне поле для оновлення
-    if not data:
-        return jsonify({
-            "error": "Validation Error",
-            "code": "NO_DATA_PROVIDED",
-            "details": [{"message": "No fields provided for update"}]
-        }), 400
-
-    try:
-        # 1. Перевіряємо, чи існує
-        existing_sign = sign_repo.get_by_id(sign_id)
-        if not existing_sign:
-            return jsonify({'error': 'Sign not found'}), 404
-
-        # 2. Оновлюємо в базі (репозиторій)
-        sign_repo.update(sign_id, data)
-
-        # 3. Повертаємо оновлений об'єкт
-        updated_sign = sign_repo.get_by_id(sign_id)
-
-        return jsonify({'message': 'success', 'data': updated_sign.to_dict()}), 200
-
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+    if not sign_repo.get_by_id(sign_id): return jsonify({'error': 'Not found'}), 404
+    sign_repo.update(sign_id, data)
+    return jsonify({'message': 'success', 'data': sign_repo.get_by_id(sign_id).to_dict()})
 
 
-@app.route('/signs/id/<int:sign_id>', methods=['DELETE'])
+@app.route('/signs/<int:sign_id>', methods=['DELETE'])
 @admin_required()
 def delete_sign(sign_id):
-    try:
-        # ВИКОРИСТОВУЄМО РЕПОЗИТОРІЙ
-        rows_deleted = sign_repo.delete(sign_id)
+    if sign_repo.delete(sign_id) == 0: return jsonify({'error': 'Not found'}), 404
+    return '', 204
 
-        if rows_deleted == 0:
-            return jsonify({'error': 'Sign not found'}), 404
-
-        # 204 No Content - ідеальна відповідь для DELETE
-        return '', 204
-
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-# --- ЕНДПОІНТИ АВТЕНТИФІКАЦІЇ ---
 
 @app.route('/register', methods=['POST'])
 def register():
     data = request.get_json()
-    username = data.get('username')
-    password = data.get('password')
-    if not username or not password:
-        return jsonify({"error": "Username and password are required"}), 400
-
-    # ВИКОРИСТОВУЄМО РЕПОЗИТОРІЙ
-    existing_user = user_repo.get_by_username_for_auth(username)
-    if existing_user:
-        return jsonify({"error": "Username already exists"}), 409
-
-    hashed_password = bcrypt.generate_password_hash(password).decode('utf-8')
-
-    # ВИКОРИСТОВУЄМО РЕПОЗИТОРІЙ
-    user_repo.create(username, hashed_password, 'guest')
-    return jsonify({"message": "User registered successfully"}), 201
+    if user_repo.get_by_username_for_auth(data.get('username')):
+        return jsonify({"error": "Username exists"}), 409
+    hashed = bcrypt.generate_password_hash(data.get('password')).decode('utf-8')
+    user_repo.create(data.get('username'), hashed, 'guest')
+    return jsonify({"message": "User registered"}), 201
 
 
 @app.route('/login', methods=['POST'])
 def login():
     data = request.get_json()
-    username = data.get('username')
-    password = data.get('password')
-    if not username or not password:
-        return jsonify({"error": "Username and password are required"}), 400
-
-    # ВИКОРИСТОВУЄМО РЕПОЗИТОРІЙ
-    user_row = user_repo.get_by_username_for_auth(username)
-
-    if user_row and bcrypt.check_password_hash(user_row['password_hash'], password):
+    user_row = user_repo.get_by_username_for_auth(data.get('username'))
+    if user_row and bcrypt.check_password_hash(user_row['password_hash'], data.get('password')):
         access_token = create_access_token(identity=str(user_row['id']))
-        return jsonify(
-            message="Login successful",
-            access_token=access_token,
-            user={
-                'id': user_row['id'],
-                'username': user_row['username'],
-                'role': user_row['role']
-            }
-        )
-    else:
-        return jsonify({"error": "Invalid username or password"}), 401
+        return jsonify(message="Login successful", access_token=access_token,
+                       user={'id': user_row['id'], 'username': user_row['username'], 'role': user_row['role']})
+    return jsonify({"error": "Invalid credentials"}), 401
 
-
-# --- ЕНДПОІНТИ ДЛЯ КОРИСТУВАЧІВ ---
 
 @app.route('/users', methods=['GET'])
 @admin_required()
 def get_all_users():
-    try:
-        # ВИКОРИСТОВУЄМО РЕПОЗИТОРІЙ
-        users = user_repo.get_all()
-        return jsonify({'message': 'success', 'data': [u.to_dict() for u in users]})  # ВИКОРИСТОВУЄМО .to_dict()
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/users/<int:user_id>', methods=['GET'])
-@admin_required()
-def get_user_by_id(user_id):
-    try:
-        # ВИКОРИСТОВУЄМО РЕПОЗИТОРІЙ
-        user = user_repo.get_by_id(user_id)
-        if user:
-            return jsonify({'message': 'success', 'data': user.to_dict()})  # ВИКОРИСТОВУЄМО .to_dict()
-        else:
-            return jsonify({'error': 'User not found'}), 404
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+    return jsonify({'message': 'success', 'data': [u.to_dict() for u in user_repo.get_all()]})
 
 
 @app.route('/users/<int:user_id>/promote', methods=['POST'])
 @admin_required()
 def promote_user_to_admin(user_id):
-    try:
-        # ВИКОРИСТОВУЄМО РЕПОЗИТОРІЙ (Крок 1: Отримати об'єкт)
-        user = user_repo.get_by_id(user_id)
-        if user:
-            # ВИКОРИСТОВУЄМО DDD МОДЕЛЬ (Крок 2: Змінити стан)
-            user.promote_to_admin()
-
-            # ВИКОРИСТОВУЄМО РЕПОЗИТОРІЙ (Крок 3: Зберегти стан)
-            user_repo.update_role(user.id, user.role)
-
-            return jsonify({'message': 'success', 'user': user.to_dict()})  # ВИКОРИСТОВУЄМО .to_dict()
-        else:
-            return jsonify({'error': 'User not found'}), 404
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/health', methods=['GET'])
-def health_check():
-    """Повертає статус системи"""
-    return jsonify({"status": "ok"})
+    user = user_repo.get_by_id(user_id)
+    if not user: return jsonify({'error': 'Not found'}), 404
+    user.promote_to_admin()
+    user_repo.update_role(user.id, user.role)
+    return jsonify({'message': 'success', 'user': user.to_dict()})
 
 
 if __name__ == '__main__':
     if os.path.exists(DATABASE_PATH):
-        print(f"Видаляємо стару базу {DATABASE_PATH} для оновлення структури...")
-        os.remove(DATABASE_PATH)
-
+        try:
+            os.remove(DATABASE_PATH)
+        except:
+            pass
     init_database()
-
-    # Демонстрація DDD моделей
-    print("Демонстрація DDD моделей:")
-    demo_sign = RoadSign(1, "Стоп", "Заборонні", "Зупинитися перед знаком")
-    print(f"   Створено знак: {demo_sign.name}")
-    demo_user = User(1, "test_user", "test@example.com", "guest")
-    print(f"   Створено користувача: {demo_user.username}")
-    demo_user.promote_to_admin()
-    print(f"   Після підвищення: {demo_user.role}")
-
     app.run(debug=True, port=5000)
