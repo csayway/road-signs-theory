@@ -230,7 +230,29 @@ async function login() {
 async function register() {
     const u = document.getElementById('username').value;
     const p = document.getElementById('password').value;
-    try { await fetch(`${API_URL}/register`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({username:u, password:p})}); alert('OK'); } catch(e){}
+
+    if (!u || !p) {
+        alert('Будь ласка, введіть ім\'я та пароль');
+        return;
+    }
+
+    try {
+        const res = await fetch(`${API_URL}/register`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({username:u, password:p})
+        });
+
+        const data = await res.json();
+
+        if(res.status === 201) {
+            alert('Користувача успішно створено! Тепер натисніть "Увійти".');
+        } else {
+            alert(data.error || 'Помилка реєстрації');
+        }
+    } catch(e) {
+        alert('Помилка мережі');
+    }
 }
 
 function logout() { localStorage.removeItem('access_token'); localStorage.removeItem('user'); updateUI(); switchTab('signs'); }

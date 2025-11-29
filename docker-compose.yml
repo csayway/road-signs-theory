@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  # --- 1. BACKEND (Flask) ---
+  api:
+    build: ./backend  # Шлях до Dockerfile бекенду
+    container_name: road-signs-api
+    ports:
+      - "5000:5000"   # Прокидаєте порт: localhost:5000 -> container:5000
+    volumes:
+      # Монтуєте папку data, щоб база даних SQLite зберігалася на вашому диску,
+      # а не зникала при видаленні контейнера
+      - ./backend/data:/app/data
+    environment:
+      - JWT_SECRET_KEY=ezhi
+    networks:
+      - app-network
+
+  # --- 2. FRONTEND (Nginx) ---
+  web:
+    build: ./frontend # Шлях до Dockerfile фронтенду
+    container_name: road-signs-web
+    ports:
+      - "3000:80"     # Сайт буде доступний на http://localhost:3000
+    depends_on:
+      - api           # Чекаємо запуску API
+    networks:
+      - app-network
+
+  # --- 3. DATABASE (Postgres) ---
+  # ВИ додали його, щоб виконати умову,
+  # хоча поки що використовуєте SQLite.
+  db:
+    image: postgres:15-alpine
+    container_name: road-signs-db
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: roadsigns
+    ports:
+      - "5432:5432"
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge

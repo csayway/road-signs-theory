@@ -1,0 +1,8 @@
+pycache
+venv
+.venv
+.git
+.vscode
+*.pyc
+.db
+backend/data/.db
