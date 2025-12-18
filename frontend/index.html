@@ -11,7 +11,7 @@
 
   <!-- DEGRADED MODE BANNER -->
   <div id="degradedBanner" style="display:none; background: #e74c3c; color: white; text-align: center; padding: 10px; position: sticky; top: 0; z-index: 1000;">
-    ⚠️ Система перевантажена. Деякі функції тимчасово недоступні.
+    Система перевантажена. Деякі функції тимчасово недоступні.
   </div>
 
   <nav>
@@ -19,7 +19,10 @@
       <img src="images/logo_road_sign.jpg" alt="Logo">
       <h2>Дорожні знаки</h2>
     </div>
-    <button onclick="openModal()">Особистий кабінет</button>
+    <div style="display: flex; gap: 10px;">
+        <span id="userInfoDisplay" style="color: white; align-self: center; display: none;"></span>
+        <button onclick="openAuthModal()">Особистий кабінет</button>
+    </div>
   </nav>
 
   <div class="container">
@@ -39,10 +42,14 @@
         <button onclick="loadSignsByCategory('Інформаційні')">Інформаційні</button>
         <button onclick="loadSignsByCategory('Попереджувальні')">Попереджувальні</button>
 
-        <button onclick="createTestSign()" style="background: #f1c40f; color: black; margin-left: 20px;">Тест Ідемпотентності</button>
+        <!-- Кнопки дій -->
+        <button onclick="createTestSign()" style="background: #f1c40f; color: black; margin-left: 20px;">Тест</button>
+
+        <!-- КНОПКА ДОДАТИ (Тільки для адміна) -->
+        <button id="addSignBtn" onclick="openSignForm()" style="background: #27ae60; color: white; display: none;">Додати знак</button>
       </div>
 
-      <div id="loading" style="display:none;text-align:center;">⏳ Завантаження...</div>
+      <div id="loading" style="display:none;text-align:center;">Завантаження...</div>
       <div id="signsList" class="signs-container"></div>
     </div>
 
@@ -51,16 +58,16 @@
       <div class="admin-panel">
         <h2>Управління користувачами</h2>
         <button onclick="loadAllUsers()">Оновити список</button>
-        <div id="usersLoading" style="display:none;">⏳ Завантаження користувачів...</div>
+        <div id="usersLoading" style="display:none;">Завантаження користувачів...</div>
         <div id="usersList"></div>
       </div>
     </div>
   </div>
 
-  <!-- === MODAL AUTH === -->
+  <!-- === MODAL AUTH (Вхід) === -->
   <div id="authModal" class="modal">
     <div class="modal-content">
-      <span class="close-btn" onclick="closeModal()">✖</span>
+      <span class="close-btn" onclick="closeModal('authModal')">✖</span>
 
       <div id="authStatus" style="display:none; margin-bottom: 15px;">
         <p>Ви увійшли як: <strong id="authUsername"></strong></p>
@@ -74,6 +81,38 @@
         <button onclick="login()">Увійти</button>
         <button onclick="register()">Зареєструватися</button>
       </div>
+    </div>
+  </div>
+
+  <!-- === MODAL SIGN DETAILS (Деталі знака) === -->
+  <div id="detailModal" class="modal">
+    <div class="modal-content" style="max-width: 600px;">
+        <span class="close-btn" onclick="closeModal('detailModal')">✖</span>
+        <h2 id="detailName">Назва знака</h2>
+        <span id="detailCategory" class="category" style="font-size: 1rem;">Категорія</span>
+        <hr style="margin: 15px 0; border: 0; border-top: 1px solid #ddd;">
+        <p id="detailDescription" style="font-size: 1.1rem; line-height: 1.6;">Опис</p>
+
+        <!-- Кнопки адміна в деталях -->
+        <div id="detailAdminControls" style="display: none; margin-top: 20px; text-align: right;">
+            <button onclick="editCurrentSign()" style="background: #f39c12;">Редагувати</button>
+            <button onclick="deleteCurrentSign()" style="background: #e74c3c;">Видалити</button>
+        </div>
+    </div>
+  </div>
+
+  <!-- === MODAL SIGN FORM (Додавання/Редагування) === -->
+  <div id="signFormModal" class="modal">
+    <div class="modal-content">
+        <span class="close-btn" onclick="closeModal('signFormModal')">✖</span>
+        <h3 id="formTitle">Додати/Редагувати знак</h3>
+        <input type="hidden" id="signId"> <!-- Приховане поле для ID -->
+
+        <input type="text" id="signName" placeholder="Назва знака">
+        <input type="text" id="signCategory" placeholder="Категорія (напр. Заборонні)">
+        <textarea id="signDescription" placeholder="Опис та правила застосування" rows="5" style="width: 100%; margin: 8px 0; padding: 10px; border-radius: 8px;"></textarea>
+
+        <button onclick="saveSign()" style="background: #27ae60;">Зберегти</button>
     </div>
   </div>
 
