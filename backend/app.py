@@ -10,6 +10,15 @@ from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_requir
 from functools import wraps
 from werkzeug.exceptions import HTTPException
 
+# Імпорти OPENTELEMETRY ---
+from opentelemetry import trace
+from opentelemetry.sdk.resources import SERVICE_NAME, Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.flask import FlaskInstrumentor
+from opentelemetry.instrumentation.logging import LoggingInstrumentor
+
 # Імпорти репозиторіїв
 from repositories.road_sign import RoadSignRepository
 from repositories.user import UserRepository
@@ -18,7 +27,33 @@ from repositories.user import UserRepository
 from domain.catalog.road_sign import RoadSign
 from domain.users.user import User
 
+
+# --- НАЛАШТУВАННЯ OPENTELEMETRY ---
+def configure_opentelemetry(flask_app):
+    # 1. Визначаємо ім'я сервісу
+    resource = Resource(attributes={
+        SERVICE_NAME: "road-signs-backend"
+    })
+
+    # 2. Налаштовуємо Трейсинг (Traces)
+    trace_provider = TracerProvider(resource=resource)
+
+    # Відправка на OTEL Collector (адреса буде в env змінних)
+    otlp_exporter = OTLPSpanExporter(endpoint=os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317"),
+                                     insecure=True)
+
+    trace_provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
+    trace.set_tracer_provider(trace_provider)
+
+    # 3. Автоматична інструментація Flask
+    FlaskInstrumentor().instrument_app(flask_app)
+
+    # 4. Автоматична інструментація Логів (додає trace_id в логи)
+    LoggingInstrumentor().instrument(set_logging_packages=True)
+
 app = Flask(__name__)
+
+configure_opentelemetry(app)
 
 # --- КОНФІГУРАЦІЯ ---
 app.config["JWT_SECRET_KEY"] = "ezhi"
