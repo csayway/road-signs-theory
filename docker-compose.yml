@@ -23,7 +23,7 @@ services:
     build: ./frontend
     container_name: road-signs-web
     ports:
-      - "3000:80"     # Сайт буде доступний на http://localhost:3000
+      - "3000:80"
     depends_on:
       - api
     networks:

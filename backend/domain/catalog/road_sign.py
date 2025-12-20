@@ -14,7 +14,7 @@ class RoadSign:
         """Змінити категорію знака"""
         self.category = new_category
 
-    def to_dict(self):
+def to_dict(self):
         """Конвертує об'єкт в словник для JSON-серіалізації"""
         return {
             'id': self.id,

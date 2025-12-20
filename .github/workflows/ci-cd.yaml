@@ -7,7 +7,7 @@ on:
     branches: [ "main" ]
   workflow_dispatch:
 
-# Скасовує старі білди, якщо ви швидко запушили новий код
+# Скасовує старі білди, якщо швидко запушити новий код
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -38,18 +38,17 @@ jobs:
           if [ -f backend/requirements.txt ]; then pip install -r backend/requirements.txt; fi
 
       - name: Run Tests
-        # Додаєте backend у PYTHONPATH, щоб тести бачили ваші модулі
         run: |
           export PYTHONPATH=$PYTHONPATH:$(pwd)/backend
           pytest
 
   # === 2. ЗБІРКА ТА ПУБЛІКАЦІЯ DOCKER (CD) ===
   build-and-push:
-    needs: test # Запускається тільки якщо тести пройшли успішно
+    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write # Дозвіл на запис у GHCR
+      packages: write
 
     strategy:
       fail-fast: false
